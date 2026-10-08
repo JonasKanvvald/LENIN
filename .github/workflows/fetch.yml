@@ -3,6 +3,17 @@ name: Global Music API Proxy Worker (MusicBrainz)
 on:
   repository_dispatch:
     types: [fetch_album]
+  workflow_dispatch:
+    inputs:
+      artist:
+        description: 'Имя артиста'
+        required: true
+        default: 'The Offspring'
+      album:
+        description: 'Название альбома'
+        required: true
+        default: 'Americana'
+
 
 jobs:
   fetch:
