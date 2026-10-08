@@ -16,16 +16,15 @@ jobs:
           echo "🌐 Connecting to MusicBrainz API Gateway..."
           echo "📥 Searching for: $ARTIST — $ALBUM"
           
-          # Кодируем пробелы для URL-запроса вручную
-          SH_ARTIST=$(echo "$ARTIST" | sed 's/ /%20/g')
-          SH_ALBUM=$(echo "$ALBUM" | sed 's/ /%20/g')
+          # Заменяем пробелы на плюсы для гибкого Lucene-поиска MusicBrainz
+          QUERY=$(echo "$ARTIST $ALBUM" | sed 's/ /+/g')
           
-          # Ищем релиз в базе данных MusicBrainz
+          # Делаем полнотекстовый поиск релиза с флагом fmt=json
           SEARCH_RES=$(curl -s -X GET \
             -H "User-Agent: MusicVersionsApp/1.0.0 ( contact@example.com )" \
             "https://musicbrainz.org")
           
-          # Вытаскиваем ID релиза (mbid)
+          # Извлекаем ID самого релевантного релиза из результатов поиска
           RELEASE_ID=$(echo "$SEARCH_RES" | grep -o '"id":"[^"]*' | head -n 1 | cut -d'"' -f4)
           
           if [ -z "$RELEASE_ID" ]; then
@@ -36,32 +35,48 @@ jobs:
           echo "🎯 Release found! ID: $RELEASE_ID"
           echo "📥 Requesting detailed tracklist payload..."
           
-          # Скачиваем полный треклист конкретного релиза
+          # Запрашиваем подробные данные релиза с записями треков (recordings)
           FINAL_PAYLOAD=$(curl -s -X GET \
             -H "User-Agent: MusicVersionsApp/1.0.0 ( contact@example.com )" \
             "https://musicbrainz.org")
             
-          # Пересобираем JSON под структуру, которую ожидает ваш скрипт на ПК
-          # Мутируем формат MusicBrainz в формат Discogs
+          # 🎯 ИСПРАВЛЕНО: Безопасный Python-конвертер структуры MusicBrainz -> Discogs
           echo "$FINAL_PAYLOAD" | python3 -c "
           import sys, json
           try:
               data = json.load(sys.stdin)
               tracks = []
-              for t in data.get('media', [{}])[0].get('tracks', []):
-                  tracks.append({
-                      'title': t.get('title'),
-                      'type_': 'track',
-                      'duration': f\"{int(t.get('length', 0)) // 60000}:{str((int(t.get('length', 0)) // 1000) % 60).zfill(2)}\"
-                  })
+              
+              # Корректно обходим вложенные массивы media и tracks
+              media_list = data.get('media', [])
+              if media_list and isinstance(media_list, list):
+                  raw_tracks = media_list[0].get('tracks', [])
+                  for t in raw_tracks:
+                      length_ms = int(t.get('length', 0)) if t.get('length') else 0
+                      mins = length_ms // 60000
+                      secs = (length_ms // 1000) % 60
+                      duration_str = f'{mins}:{str(secs).zfill(2)}'
+                      
+                      tracks.append({
+                          'title': t.get('title', 'Unknown Track'),
+                          'type_': 'track',
+                          'duration': duration_str
+                      })
+                      
               output = {
                   'year': data.get('date', '2026')[:4],
                   'tracklist': tracks
               }
               print(json.dumps(output, ensure_ascii=False))
           except Exception as e:
+              print(f'Parser sub-error: {e}', file=sys.stderr)
               sys.exit(1)
           " > tracklist_result.json
+          
+          if [ ! -s tracklist_result.json ]; then
+            echo "❌ Failed to generate unified tracklist result payload."
+            exit 1
+          fi
           
           echo "✅ Payload successfully generated and adapter verified."
           
