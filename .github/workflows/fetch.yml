@@ -1,4 +1,4 @@
-name: Discogs API Proxy Worker
+name: Global Music API Proxy Worker
 
 on:
   repository_dispatch:
@@ -8,7 +8,7 @@ jobs:
   fetch:
     runs-on: ubuntu-latest
     steps:
-      - name: Execute Dynamic Music Request via MusicBrainz Python
+      - name: Execute Dynamic Music Request via AudioDB Python
         env:
           ARTIST_PAYLOAD: ${{ github.event.client_payload.artist }}
           ALBUM_PAYLOAD: ${{ github.event.client_payload.album }}
@@ -23,66 +23,67 @@ jobs:
           artist = os.getenv("ARTIST_PAYLOAD", "").strip()
           album = os.getenv("ALBUM_PAYLOAD", "").strip()
 
-          print("🌐 Connecting to MusicBrainz API Gateway...")
+          print("🌐 Connecting to Open Music API Gateway...")
           print(f"📥 Searching for: {artist} — {album}")
 
           headers = {
-              "User-Agent": "MusicVersionsApp/1.0.0 ( contact@example.com )",
+              "User-Agent": "MusicVersionsApp/1.0.0",
               "Accept": "application/json"
           }
 
-          # 🎯 АБСОЛЮТНО КОРРЕКТНЫЙ ПУТЬ К API ПОИСКА (/ws/2/release/)
-          clean_query = f'artist:"{artist}" AND release:"{album}"'
-          query_str = urllib.parse.urlencode({"query": clean_query, "fmt": "json"})
-          search_url = f"https://musicbrainz.org?{query_str}"
+          # 🎯 Шаг 1: Ищем ID альбома через открытый тестовый ключ API '2'
+          encoded_artist = urllib.parse.quote(artist)
+          encoded_album = urllib.parse.quote(album)
+          search_url = f"https://theaudiodb.com{encoded_artist}&a={encoded_album}"
           
           try:
               req = urllib.request.Request(search_url, headers=headers)
               with urllib.request.urlopen(req) as response:
                   search_data = json.loads(response.read().decode('utf-8'))
               
-              releases = search_data.get("releases", [])
-              if not releases:
-                  print("❌ Album NOT found in MusicBrainz database (Releases array is empty).")
+              album_list = search_data.get("album", [])
+              if not album_list:
+                  print("❌ Album NOT found in Open Music database.")
                   sys.exit(1)
                   
-              # БЕЗОПАСНОЕ ИЗВЛЕЧЕНИЕ ID (поддерживает и список, и словарь)
-              first_release = releases[0] if isinstance(releases, list) else releases
-              release_id = first_release.get("id")
+              album_id = album_list[0].get("idAlbum")
+              year_released = album_list[0].get("intYearReleased", "2026")
               
-              if not release_id:
-                  print("❌ Release ID missing in search results.")
-                  sys.exit(1)
-                  
-              print(f"🎯 Release found! ID: {release_id}")
+              print(f"🎯 Album found! ID: {album_id}")
               print("📥 Requesting detailed tracklist payload...")
               
-              # 🎯 АБСОЛЮТНО КОРРЕКТНЫЙ ПУТЬ К ДЕТАЛЬНОМУ API РЕЛИЗА
-              detail_url = f"https://musicbrainz.org{release_id}?inc=recordings&fmt=json"
-              req_detail = urllib.request.Request(detail_url, headers=headers)
+              # 🎯 Шаг 2: Скачиваем треклист по ID альбома
+              track_url = f"https://theaudiodb.com{album_id}"
+              req_track = urllib.request.Request(track_url, headers=headers)
               
-              with urllib.request.urlopen(req_detail) as response_detail:
-                  detail_data = json.loads(response_detail.read().decode('utf-8'))
+              with urllib.request.urlopen(req_track) as response_track:
+                  track_data = json.loads(response_track.read().decode('utf-8'))
                   
+              raw_tracks = track_data.get("track", [])
+              if not raw_tracks:
+                  print("❌ Tracklist is empty for this album ID.")
+                  sys.exit(1)
+                  
+              # 🎯 Шаг 3: Адаптируем структуру под ожидания вашего локального ПК
               tracks = []
-              media_list = detail_data.get("media", [])
+              # Сортируем треки по их официальной позиции на диске
+              raw_tracks.sort(key=lambda x: int(x.get("intTrackNumber", 0) or 0))
               
-              for media in media_list:
-                  raw_tracks = media.get("tracks", [])
-                  for t in raw_tracks:
-                      length_ms = int(t.get("length", 0)) if t.get("length") else 0
-                      mins = length_ms // 60000
-                      secs = (length_ms // 1000) % 60
-                      duration_str = f"{mins}:{str(secs).zfill(2)}"
-                      
-                      tracks.append({
-                          "title": t.get("title", "Unknown Track"),
-                          "type_": "track",
-                          "duration": duration_str
-                      })
-                      
+              for t in raw_tracks:
+                  # Переводим длительность из секунд в формат ММ:СС
+                  duration_sec = int(t.get("intDuration", 0) or 0) // 1000
+                  mins = duration_sec // 60
+                  secs = duration_sec % 60
+                  duration_str = f"{mins}:{str(secs).zfill(2)}"
+                  
+                  tracks.append({
+                      "title": t.get("strTrack", "Unknown Track"),
+                      "type_": "track",
+                      "duration": duration_str
+                  })
+                  
               output_payload = {
-                  "year": detail_data.get("date", "2026")[:4],
+                  "year": str(year_released)[:4],
                   "tracklist": tracks
               }
               
