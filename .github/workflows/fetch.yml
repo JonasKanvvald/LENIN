@@ -33,9 +33,14 @@ jobs:
           print("🌐 Connecting to Discogs API Gateway...")
           print(f"📥 Searching for: {artist} — {album}")
 
+          # 🎯 МАСКИРОВКА ПОД БРАУЗЕР CHROME ДЛЯ ОБХОДА CLOUDFLARE
           headers = {
-              "User-Agent": "MusicVersionsApp/1.0.0",
-              "Authorization": f"Discogs token={token}"
+              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+              "Accept": "application/json, text/plain, */*",
+              "Accept-Language": "en-US,en;q=0.9",
+              "Authorization": f"Discogs token={token}",
+              "Cache-Control": "no-cache",
+              "Pragma": "no-cache"
           }
 
           query_params = {"artist": artist, "release_title": album, "per_page": 1}
@@ -60,12 +65,13 @@ jobs:
                   print("❌ Album NOT found in Discogs database.")
                   exit(1)
                   
-              resource_url = results[0].get("resource_url")
+              resource_url = results[0].get("resource_url") if isinstance(results, list) else results.get("resource_url")
               if not resource_url:
                   print("❌ Resource URL not found in results!")
                   exit(1)
                   
               print(f"🎯 Release endpoint found: {resource_url}")
+              print("📥 Downloading official tracklist payload...")
               
               req_release = urllib.request.Request(resource_url, headers=headers)
               with urllib.request.urlopen(req_release) as response_release:
@@ -77,10 +83,9 @@ jobs:
               print("✅ Payload successfully generated and verified.")
               
           except urllib.error.HTTPError as http_err:
-              # 🎯 ИСПРАВЛЕНО: Выводим точный код и текст ошибки от Discogs напрямую в лог
               print(f"❌ СЕТЕВАЯ ОШИБКА DISCOGS API (Код {http_err.code}):")
               try:
-                  print(http_err.read().decode('utf-8'))
+                  print(http_err.read().decode('utf-8')[:1000])
               except:
                   print("Не удалось прочитать тело ответа ошибки.")
               exit(1)
