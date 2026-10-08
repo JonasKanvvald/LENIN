@@ -1,0 +1,64 @@
+name: Discogs API Proxy Worker
+
+on:
+  repository_dispatch:
+    types: [fetch_album]
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Execute Dynamic Discogs Request
+        run: |
+          ARTIST="${{ github.event.client_payload.artist }}"
+          ALBUM="${{ github.event.client_payload.album }}"
+          TOKEN="${{ github.event.client_payload.token }}"
+          
+          echo "🌐 Fetching from Discogs servers: $ARTIST - $ALBUM"
+          
+          # 1. Ищем ID мастер-релиза через официальный API-эндпоинт поиска
+          SEARCH_RES=$(curl -s -G \
+            -H "User-Agent: MusicVersionsApp/1.0" \
+            -H "Authorization: Discogs token=$TOKEN" \
+            --data-urlencode "q=$ARTIST $ALBUM" \
+            --data-urlencode "type=master" \
+            --data-urlencode "per_page=1" \
+            "https://discogs.com")
+          
+          # Если мастер-релиз не найден, пробуем искать обычный релиз (release)
+          if [[ "$SEARCH_RES" == *"\"results\":[]"* ]]; then
+            echo "⚠️ Master release not found. Searching for general release..."
+            SEARCH_RES=$(curl -s -G \
+              -H "User-Agent: MusicVersionsApp/1.0" \
+              -H "Authorization: Discogs token=$TOKEN" \
+              --data-urlencode "q=$ARTIST $ALBUM" \
+              --data-urlencode "type=release" \
+              --data-urlencode "per_page=1" \
+              "https://discogs.com")
+          fi
+          
+          # Безопасно вытаскиваем resource_url с помощью grep и cut
+          RESOURCE_URL=$(echo "$SEARCH_RES" | grep -o '"resource_url":"[^"]*' | head -n 1 | cut -d'"' -f4)
+          
+          if [ -z "$RESOURCE_URL" ]; then
+            echo "❌ Album not found on Discogs."
+            exit 1
+          fi
+          
+          # 2. Выкачиваем чистый оригинальный треклист релиза
+          echo "🎯 Release found: $RESOURCE_URL"
+          echo "📥 Requesting tracklist payload..."
+          FINAL_PAYLOAD=$(curl -s -H "User-Agent: MusicVersionsApp/1.0" \
+            -H "Authorization: Discogs token=$TOKEN" \
+            "$RESOURCE_URL")
+          
+          # Сохраняем в артефакты шага
+          echo "$FINAL_PAYLOAD" > tracklist_result.json
+          echo "✅ Payload successfully generated."
+          
+      - name: Upload Tracklist Result to GitHub Bridge
+        uses: actions/upload-artifact@v4
+        with:
+          name: tracklist-payload
+          path: tracklist_result.json
+          retention-days: 1
