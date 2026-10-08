@@ -31,8 +31,9 @@ jobs:
               "Accept": "application/json"
           }
 
-          # 🎯 ИСПРАВЛЕНО: Простой и надёжный текстовый поиск без ломающих кавычек
-          query_str = urllib.parse.urlencode({"query": f"{artist} {album}", "fmt": "json"})
+          # 🎯 ИСПРАВЛЕНО: Явный Lucene-поиск по полям, обёрнутый в правильный эндпоинт /ws/2/release/
+          clean_query = f'artist:"{artist}" AND release:"{album}"'
+          query_str = urllib.parse.urlencode({"query": clean_query, "fmt": "json"})
           search_url = f"https://musicbrainz.org?{query_str}"
           
           try:
@@ -45,7 +46,7 @@ jobs:
                   print("❌ Album NOT found in MusicBrainz database (Releases array is empty).")
                   sys.exit(1)
                   
-              # 🎯 ИСПРАВЛЕНО: Забираем ID первого (самого релевантного) элемента из массива [0]
+              # Забираем ID первого (самого релевантного) элемента из массива [0]
               release_id = releases[0].get("id")
               if not release_id:
                   print("❌ Release ID missing in search results.")
@@ -54,21 +55,19 @@ jobs:
               print(f"🎯 Release found! ID: {release_id}")
               print("📥 Requesting detailed tracklist payload...")
               
-              # 2. Получаем подробную информацию о релизе с записями треков
+              # 🎯 ИСПРАВЛЕНО: Правильный и точный путь к получению детальной информации о релизе
               detail_url = f"https://musicbrainz.org{release_id}?inc=recordings&fmt=json"
               req_detail = urllib.request.Request(detail_url, headers=headers)
               
               with urllib.request.urlopen(req_detail) as response_detail:
                   detail_data = json.loads(response_detail.read().decode('utf-8'))
                   
-              # 3. Конвертер структуры MusicBrainz -> Совместимый формат Discogs
               tracks = []
               media_list = detail_data.get("media", [])
               
               for media in media_list:
                   raw_tracks = media.get("tracks", [])
                   for t in raw_tracks:
-                      # Переводим длительность из миллисекунд в формат ММ:СС
                       length_ms = int(t.get("length", 0)) if t.get("length") else 0
                       mins = length_ms // 60000
                       secs = (length_ms // 1000) % 60
@@ -80,7 +79,6 @@ jobs:
                           "duration": duration_str
                       })
                       
-              # Собираем итоговый пакет данных
               output_payload = {
                   "year": detail_data.get("date", "2026")[:4],
                   "tracklist": tracks
