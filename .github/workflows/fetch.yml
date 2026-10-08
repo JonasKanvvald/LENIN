@@ -44,23 +44,18 @@ jobs:
               "Accept-Language": "en-US,en;q=0.9"
           }
 
-          # 1. 🎯 ХАК: Собираем параметры в URL вручную через urllib, 
-          # чтобы curl_cffi отправил идеально чистый HTTP-пакет, пробивающий Cloudflare
-          query_params = {"artist": artist, "release_title": album, "per_page": 1}
+          # 🎯 ИСПРАВЛЕНО: Делаем один прямой глобальный поиск по строке "q", который Discogs обрабатывает идеально.
+          # Обязательно добавляем фильтр type=master, чтобы забрать каноничную версию релиза с чистым треклистом.
+          query_params = {"q": f"{artist} {album}", "type": "master", "per_page": 1}
           search_url = f"https://discogs.com?{urllib.parse.urlencode(query_params)}"
           
           try:
+              # Идеальная TLS-имитация браузера Chrome зафиксирована для главного запроса
               res = requests.get(search_url, headers=headers, impersonate="chrome120", timeout=30)
               
-              # Если раздельный поиск пуст или заблокирован, пробуем фолбэк по строке q
-              if res.status_code != 200 or not res.json().get("results"):
-                  print("⚠️ Field search empty or restricted. Trying global query search...")
-                  fallback_params = {"q": f"{artist} {album}", "per_page": 1}
-                  fallback_url = f"https://discogs.com?{urllib.parse.urlencode(fallback_params)}"
-                  res = requests.get(fallback_url, headers=headers, impersonate="chrome120", timeout=30)
-
               if res.status_code != 200:
                   print(f"❌ СЕТЕВАЯ ОШИБКА DISCOGS API (Код {res.status_code})")
+                  print(res.text[:500])
                   sys.exit(1)
                   
               search_data = res.json()
@@ -71,7 +66,8 @@ jobs:
                   sys.exit(1)
                   
               # Извлекаем ссылку на релиз
-              resource_url = results[0].get("resource_url") if isinstance(results, list) else results.get("resource_url")
+              first_result = results if isinstance(results, list) else results
+              resource_url = first_result.get("resource_url")
               
               if not resource_url:
                   print("❌ Resource URL not found in results!")
@@ -80,7 +76,7 @@ jobs:
               print(f"🎯 Release endpoint found: {resource_url}")
               print("📥 Downloading official tracklist payload...")
               
-              # 3. Скачиваем треклист конкретного релиза
+              # 3. Скачиваем треклист конкретного релиза (тоже защищаем имперсонацией Chrome)
               res_release = requests.get(resource_url, headers=headers, impersonate="chrome120", timeout=30)
               
               if res_release.status_code != 200:
