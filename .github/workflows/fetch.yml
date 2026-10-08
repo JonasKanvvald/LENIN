@@ -1,4 +1,4 @@
-name: Global Music API Proxy Worker
+name: Global Music API Proxy Worker (MusicBrainz)
 
 on:
   repository_dispatch:
@@ -8,7 +8,7 @@ jobs:
   fetch:
     runs-on: ubuntu-latest
     steps:
-      - name: Execute Dynamic Music Request via AudioDB Python
+      - name: Execute Dynamic Music Request via MusicBrainz Python
         env:
           ARTIST_PAYLOAD: ${{ github.event.client_payload.artist }}
           ALBUM_PAYLOAD: ${{ github.event.client_payload.album }}
@@ -19,103 +19,112 @@ jobs:
           import sys
           import urllib.request
           import urllib.parse
+          import time
 
           artist = os.getenv("ARTIST_PAYLOAD", "").strip()
           album = os.getenv("ALBUM_PAYLOAD", "").strip()
 
-          print(" Connecting to Open Music API Gateway...")
+          if not artist or not album:
+              print("❌ Error: ARTIST_PAYLOAD or ALBUM_PAYLOAD is empty.")
+              sys.exit(1)
+
+          print(" Connecting to MusicBrainz API Gateway...")
           print(f"📥 Searching for: {artist} — {album}")
 
+          # 🔥 КРИТИЧЕСКИ ВАЖНО для MusicBrainz: валидный User-Agent с контактами
           headers = {
-              "User-Agent": "MusicVersionsApp/1.0.0",
+              "User-Agent": "MyLocalMusicDatabaseImporter/1.0.0 ( myemail@example.com )",
               "Accept": "application/json"
           }
 
-          #  Шаг 1: Ищем ID альбома через AudioDB API
-          api_key = "2"  # Публичный тестовый ключ
+          # Шаг 1: Поиск ID релиза (Release MBID) через полнотекстовый поиск Lucene
+          # Ищем точное совпадение по артисту и названию альбома
+          query = f'artist:"{artist}" AND release:"{album}"'
+          encoded_query = urllib.parse.quote(query)
           
-          # 🔥 ВАЖНО: Используем quote_plus для правильного кодирования пробелов
-          encoded_artist = urllib.parse.quote_plus(artist)
-          encoded_album = urllib.parse.quote_plus(album)
-          
-          # Правильная структура URL
-          search_url = f"https://theaudiodb.com/api/json/{api_key}/searchalbum.php?s={encoded_artist}&a={encoded_album}"
-          
-          print(f"🔍 Request URL: {search_url}")
-          
+          search_url = f"https://musicbrainz.org{encoded_query}&fmt=json"
+          print(f"🔍 Search URL: {search_url}")
+
           try:
               req = urllib.request.Request(search_url, headers=headers)
               with urllib.request.urlopen(req) as response:
                   search_data = json.loads(response.read().decode('utf-8'))
               
-              album_list = search_data.get("album", [])
-              if not album_list:
-                  print("❌ Album NOT found in Open Music database.")
+              releases = search_data.get("releases", [])
+              if not releases:
+                  print("❌ Album NOT found in MusicBrainz database.")
                   sys.exit(1)
                   
-              album_id = album_list[0].get("idAlbum")
-              year_released = album_list[0].get("intYearReleased", "2026")
+              # Берем первый наиболее подходящий релиз
+              best_match = releases[0]
+              release_id = best_match.get("id")
+              year_released = best_match.get("date", "2026")[:4]
               
-              print(f" Album found! ID: {album_id}")
-              print("📥 Requesting detailed tracklist payload...")
+              print(f"✅ Album found! MusicBrainz ID (MBID): {release_id}")
               
-              # 🎯 Шаг 2: Скачиваем треклист по ID альбома
-              track_url = f"https://theaudiodb.com/api/json/v2/{api_key}/track.php?m={album_id}"
-              print(f"🎵 Tracklist URL: {track_url}")
+              # MusicBrainz просит соблюдать лимит 1 запрос в секунду
+              time.sleep(1.0)
               
-              req_track = urllib.request.Request(track_url, headers=headers)
+              # Шаг 2: Запрос детальной информации о релизе и его треклисте (recordings)
+              lookup_url = f"https://musicbrainz.org{release_id}?inc=recordings&fmt=json"
+              print(f"🎵 Tracklist Lookup URL: {lookup_url}")
               
-              with urllib.request.urlopen(req_track) as response_track:
-                  track_data = json.loads(response_track.read().decode('utf-8'))
+              req_lookup = urllib.request.Request(lookup_url, headers=headers)
+              with urllib.request.urlopen(req_lookup) as response_lookup:
+                  lookup_data = json.loads(response_lookup.read().decode('utf-8'))
                   
-              raw_tracks = track_data.get("track", [])
-              if not raw_tracks:
-                  print("❌ Tracklist is empty for this album ID.")
+              media = lookup_data.get("media", [])
+              if not media:
+                  print("❌ Tracklist is empty for this release ID.")
                   sys.exit(1)
                   
-              # 🎯 Шаг 3: Адаптируем структуру
+              # Шаг 3: Адаптируем структуру данных под вашу локальную БД
               tracks = []
-              raw_tracks.sort(key=lambda x: int(x.get("intTrackNumber", 0) or 0))
               
-              for t in raw_tracks:
-                  duration_ms = int(t.get("intDuration", 0) or 0)
-                  duration_sec = duration_ms // 1000 if duration_ms > 0 else 0
-                  mins = duration_sec // 60
-                  secs = duration_sec % 60
-                  duration_str = f"{mins}:{str(secs).zfill(2)}"
-                  
-                  tracks.append({
-                      "position": int(t.get("intTrackNumber", len(tracks) + 1)),
-                      "title": t.get("strTrack", "Unknown Track"),
-                      "artist": t.get("strArtist", artist),
-                      "duration": duration_sec if duration_sec > 0 else None,
-                      "disc_number": 1
-                  })
-                  
+              # Проходимся по дискам (в большинстве случаев он один)
+              for disc in media:
+                  raw_tracks = disc.get("tracks", [])
+                  for t in raw_tracks:
+                      # Длительность в MusicBrainz отдается в миллисекундах
+                      duration_ms = int(t.get("length", 0) or 0)
+                      duration_sec = duration_ms // 1000 if duration_ms > 0 else 0
+                      
+                      recording = t.get("recording", {})
+                      
+                      tracks.append({
+                          "position": int(t.get("position", len(tracks) + 1)),
+                          "title": t.get("title", "Unknown Track"),
+                          "artist": artist,
+                          "duration": duration_sec if duration_sec > 0 else None,
+                          "disc_number": int(disc.get("position", 1))
+                      })
+                      
               output_payload = {
                   "title": album,
                   "artist": artist,
-                  "year": str(year_released)[:4] if year_released else "2026",
-                  "album_type": "studio",
+                  "year": year_released,
+                  "album_type": best_match.get("release-group", {}).get("primary-type", "studio").lower(),
                   "tracks": tracks,
-                  "source": "theaudiodb"
+                  "source": "musicbrainz"
               }
               
+              # Записываем результат в JSON-файл
               with open("tracklist_result.json", "w", encoding="utf-8") as f:
                   json.dump(output_payload, f, ensure_ascii=False, indent=2)
                   
-              print(f"✅ Payload successfully generated! Total tracks: {len(tracks)}")
-              print(f"📦 Output: {json.dumps(output_payload, ensure_ascii=False, indent=2)}")
+              print(f"🚀 Payload successfully generated! Total tracks: {len(tracks)}")
               
           except urllib.error.HTTPError as e:
               print(f"🚨 HTTP Error: {e.code} - {e.reason}")
-              print(f"URL: {search_url}")
+              # Если получили 503, скорее всего превысили лимит или не указан User-Agent
+              if e.code == 503:
+                  print("👉 Hint: Check your User-Agent format or slow down requests rate.")
               sys.exit(1)
           except urllib.error.URLError as e:
               print(f"🚨 URL Error: {e.reason}")
               sys.exit(1)
           except Exception as e:
-              print(f" Critical worker failure: {e}")
+              print(f"💥 Critical worker failure: {e}")
               import traceback
               traceback.print_exc()
               sys.exit(1)
