@@ -8,78 +8,93 @@ jobs:
   fetch:
     runs-on: ubuntu-latest
     steps:
-      - name: Execute Dynamic Music Request via MusicBrainz
+      - name: Execute Dynamic Music Request via MusicBrainz Python
         env:
-          ARTIST: ${{ github.event.client_payload.artist }}
-          ALBUM: ${{ github.event.client_payload.album }}
+          ARTIST_PAYLOAD: ${{ github.event.client_payload.artist }}
+          ALBUM_PAYLOAD: ${{ github.event.client_payload.album }}
+        shell: python
         run: |
-          echo "🌐 Connecting to MusicBrainz API Gateway..."
-          echo "📥 Searching for: $ARTIST — $ALBUM"
+          import os
+          import json
+          import sys
+          import urllib.request
+          import urllib.parse
+
+          artist = os.getenv("ARTIST_PAYLOAD", "").strip()
+          album = os.getenv("ALBUM_PAYLOAD", "").strip()
+
+          print("🌐 Connecting to MusicBrainz API Gateway...")
+          print(f"📥 Searching for: {artist} — {album}")
+
+          headers = {
+              "User-Agent": "MusicVersionsApp/1.0.0 ( contact@example.com )",
+              "Accept": "application/json"
+          }
+
+          # 1. Полнотекстовый Lucene-поиск релиза
+          query_str = urllib.parse.urlencode({"query": f'artist:"{artist}" AND release:"{album}"', "fmt": "json"})
+          search_url = f"https://musicbrainz.org?{query_str}"
           
-          # Заменяем пробелы на плюсы для гибкого Lucene-поиска MusicBrainz
-          QUERY=$(echo "$ARTIST $ALBUM" | sed 's/ /+/g')
-          
-          # Делаем полнотекстовый поиск релиза с флагом fmt=json
-          SEARCH_RES=$(curl -s -X GET \
-            -H "User-Agent: MusicVersionsApp/1.0.0 ( contact@example.com )" \
-            "https://musicbrainz.org")
-          
-          # Извлекаем ID самого релевантного релиза из результатов поиска
-          RELEASE_ID=$(echo "$SEARCH_RES" | grep -o '"id":"[^"]*' | head -n 1 | cut -d'"' -f4)
-          
-          if [ -z "$RELEASE_ID" ]; then
-            echo "❌ Album NOT found in MusicBrainz database."
-            exit 1
-          fi
-          
-          echo "🎯 Release found! ID: $RELEASE_ID"
-          echo "📥 Requesting detailed tracklist payload..."
-          
-          # Запрашиваем подробные данные релиза с записями треков (recordings)
-          FINAL_PAYLOAD=$(curl -s -X GET \
-            -H "User-Agent: MusicVersionsApp/1.0.0 ( contact@example.com )" \
-            "https://musicbrainz.org")
-            
-          # 🎯 ИСПРАВЛЕНО: Безопасный Python-конвертер структуры MusicBrainz -> Discogs
-          echo "$FINAL_PAYLOAD" | python3 -c "
-          import sys, json
           try:
-              data = json.load(sys.stdin)
-              tracks = []
+              req = urllib.request.Request(search_url, headers=headers)
+              with urllib.request.urlopen(req) as response:
+                  search_data = json.loads(response.read().decode('utf-8'))
               
-              # Корректно обходим вложенные массивы media и tracks
-              media_list = data.get('media', [])
-              if media_list and isinstance(media_list, list):
-                  raw_tracks = media_list[0].get('tracks', [])
+              releases = search_data.get("releases", [])
+              if not releases:
+                  print("❌ Album NOT found in MusicBrainz database (Releases array is empty).")
+                  sys.exit(1)
+                  
+              # Забираем ID самого релевантного (первого) релиза
+              release_id = releases[0].get("id")
+              if not release_id:
+                  print("❌ Release ID missing in search results.")
+                  sys.exit(1)
+                  
+              print(f"🎯 Release found! ID: {release_id}")
+              print("📥 Requesting detailed tracklist payload...")
+              
+              # 2. Получаем подробную информацию о релизе с записями треков
+              detail_url = f"https://musicbrainz.org{release_id}?inc=recordings&fmt=json"
+              req_detail = urllib.request.Request(detail_url, headers=headers)
+              
+              with urllib.request.urlopen(req_detail) as response_detail:
+                  detail_data = json.loads(response_detail.read().decode('utf-8'))
+                  
+              # 3. Конвертер структуры MusicBrainz -> Совместимый формат Discogs
+              tracks = []
+              media_list = detail_data.get("media", [])
+              
+              for media in media_list:
+                  raw_tracks = media.get("tracks", [])
                   for t in raw_tracks:
-                      length_ms = int(t.get('length', 0)) if t.get('length') else 0
+                      # Переводим длительность из миллисекунд в формат ММ:СС
+                      length_ms = int(t.get("length", 0)) if t.get("length") else 0
                       mins = length_ms // 60000
                       secs = (length_ms // 1000) % 60
-                      duration_str = f'{mins}:{str(secs).zfill(2)}'
+                      duration_str = f"{mins}:{str(secs).zfill(2)}"
                       
                       tracks.append({
-                          'title': t.get('title', 'Unknown Track'),
-                          'type_': 'track',
-                          'duration': duration_str
+                          "title": t.get("title", "Unknown Track"),
+                          "type_": "track",
+                          "duration": duration_str
                       })
                       
-              output = {
-                  'year': data.get('date', '2026')[:4],
-                  'tracklist': tracks
+              # Собираем итоговый пакет данных
+              output_payload = {
+                  "year": detail_data.get("date", "2026")[:4],
+                  "tracklist": tracks
               }
-              print(json.dumps(output, ensure_ascii=False))
+              
+              with open("tracklist_result.json", "w", encoding="utf-8") as f:
+                  json.dump(output_payload, f, ensure_ascii=False)
+                  
+              print(f"✅ Payload successfully generated! Total tracks: {len(tracks)}")
+              
           except Exception as e:
-              print(f'Parser sub-error: {e}', file=sys.stderr)
+              print(f"🚨 Критический сбой воркера: {e}")
               sys.exit(1)
-          " > tracklist_result.json
-          
-          if [ ! -s tracklist_result.json ]; then
-            echo "❌ Failed to generate unified tracklist result payload."
-            exit 1
-          fi
-          
-          echo "✅ Payload successfully generated and adapter verified."
-          
+
       - name: Upload Tracklist Result to GitHub Bridge
         uses: actions/upload-artifact@v4
         with:
