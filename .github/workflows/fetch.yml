@@ -17,7 +17,7 @@ jobs:
           echo "🌐 Connecting to Discogs API Gateway..."
           echo "📥 Searching for: $ARTIST — $ALBUM"
           
-          # Отправляем строгий, изолированный запрос на официальный API-сервер поиска
+          # 🎯 ИСПРАВЛЕНО: Запросы отправляются строго на api.discogs.com для получения JSON вместо HTML
           SEARCH_RES=$(curl -s -X GET -G \
             -H "User-Agent: MusicVersionsApp/1.0.0" \
             -H "Authorization: Discogs token=$TOKEN" \
