@@ -8,53 +8,69 @@ jobs:
   fetch:
     runs-on: ubuntu-latest
     steps:
-      - name: Execute Dynamic Discogs Request
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Execute Dynamic Discogs Request via Python
+        shell: python
         run: |
-          ARTIST="${{ github.event.client_payload.artist }}"
-          ALBUM="${{ github.event.client_payload.album }}"
-          TOKEN="${{ github.event.client_payload.token }}"
+          import os
+          import json
+          import urllib.request
+          import urllib.parse
+
+          # 1. Считываем данные из client_payload GitHub
+          artist = """${{ github.event.client_payload.artist }}""".strip()
+          album = """${{ github.event.client_payload.album }}""".strip()
+          token = """${{ github.event.client_payload.token }}""".strip()
+
+          print(f"🌐 Fetching from Discogs: {artist} - {album}")
+
+          # Формируем заголовки
+          headers = {
+              "User-Agent": "MusicVersionsApp/1.0.0",
+              "Authorization": f"Discogs token={token}"
+          }
+
+          # 2. Выполняем гибкий глобальный поиск
+          query_str = urllib.parse.urlencode({"q": f"{artist} {album}", "per_page": 5})
+          search_url = f"https://discogs.com?{query_str}"
           
-          echo "🌐 Fetching from Discogs servers: $ARTIST - $ALBUM"
-          
-          # 1. Точный поиск по раздельным полям artist и release_title
-          SEARCH_RES=$(curl -s -G \
-            -H "User-Agent: MusicVersionsApp/1.0" \
-            -H "Authorization: Discogs token=$TOKEN" \
-            --data-urlencode "artist=$ARTIST" \
-            --data-urlencode "release_title=$ALBUM" \
-            --data-urlencode "per_page=1" \
-            "https://discogs.com")
-          
-          # Если раздельный поиск ничего не дал, пробуем глобальный текстовый поиск (q)
-          if [[ "$SEARCH_RES" == *"\"results\":[]"* ]]; then
-            echo "⚠️ Field search failed. Trying global query search..."
-            SEARCH_RES=$(curl -s -G \
-              -H "User-Agent: MusicVersionsApp/1.0" \
-              -H "Authorization: Discogs token=$TOKEN" \
-              --data-urlencode "q=$ARTIST $ALBUM" \
-              --data-urlencode "per_page=1" \
-              "https://discogs.com")
-          fi
-          
-          # Вытаскиваем resource_url первого найденного релиза
-          RESOURCE_URL=$(echo "$SEARCH_RES" | grep -o '"resource_url":"[^"]*' | head -n 1 | cut -d'"' -f4)
-          
-          if [ -z "$RESOURCE_URL" ]; then
-            echo "❌ Album not found on Discogs."
-            exit 1
-          fi
-          
-          # 2. Выкачиваем оригинальный треклист релиза
-          echo "🎯 Release found: $RESOURCE_URL"
-          echo "📥 Requesting tracklist payload..."
-          FINAL_PAYLOAD=$(curl -s -H "User-Agent: MusicVersionsApp/1.0" \
-            -H "Authorization: Discogs token=$TOKEN" \
-            "$RESOURCE_URL")
-          
-          # Сохраняем результат
-          echo "$FINAL_PAYLOAD" > tracklist_result.json
-          echo "✅ Payload successfully generated."
-          
+          try:
+              req = urllib.request.Request(search_url, headers=headers)
+              with urllib.request.urlopen(req) as response:
+                  search_data = json.loads(response.read().decode('utf-8'))
+              
+              results = search_data.get("results", [])
+              if not results:
+                  print("❌ Results array is empty!")
+                  exit(1)
+                  
+              # Берем самый первый результат (наиболее релевантный)
+              resource_url = results[0].get("resource_url")
+              if not resource_url:
+                  print("❌ Resource URL not found in first result!")
+                  exit(1)
+                  
+              print(f"🎯 Found release resource: {resource_url}")
+              
+              # 3. Запрашиваем треклист конкретного релиза
+              req_release = urllib.request.Request(resource_url, headers=headers)
+              with urllib.request.urlopen(req_release) as response_release:
+                  final_payload = json.loads(response_release.read().decode('utf-8'))
+                  
+              # Сохраняем в файл, который заберет локальный скрипт
+              with open("tracklist_result.json", "w", encoding="utf-8") as f:
+                  json.dump(final_payload, f, ensure_ascii=False)
+                  
+              print("✅ Payload successfully generated.")
+              
+          except Exception as e:
+              print(f"🚨 Error occurred during Discogs API call: {e}")
+              exit(1)
+
       - name: Upload Tracklist Result to GitHub Bridge
         uses: actions/upload-artifact@v4
         with:
