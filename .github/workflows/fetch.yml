@@ -31,8 +31,8 @@ jobs:
               "Accept": "application/json"
           }
 
-          # 1. Полнотекстовый Lucene-поиск релиза
-          query_str = urllib.parse.urlencode({"query": f'artist:"{artist}" AND release:"{album}"', "fmt": "json"})
+          # 🎯 ИСПРАВЛЕНО: Простой и надёжный текстовый поиск без ломающих кавычек
+          query_str = urllib.parse.urlencode({"query": f"{artist} {album}", "fmt": "json"})
           search_url = f"https://musicbrainz.org?{query_str}"
           
           try:
@@ -45,7 +45,7 @@ jobs:
                   print("❌ Album NOT found in MusicBrainz database (Releases array is empty).")
                   sys.exit(1)
                   
-              # Забираем ID самого релевантного (первого) релиза
+              # 🎯 ИСПРАВЛЕНО: Забираем ID первого (самого релевантного) элемента из массива [0]
               release_id = releases[0].get("id")
               if not release_id:
                   print("❌ Release ID missing in search results.")
