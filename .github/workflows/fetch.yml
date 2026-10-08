@@ -8,54 +8,87 @@ jobs:
   fetch:
     runs-on: ubuntu-latest
     steps:
-      - name: Execute Dynamic Discogs Request
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Execute Dynamic Discogs Request via Python
         env:
-          ARTIST: ${{ github.event.client_payload.artist }}
-          ALBUM: ${{ github.event.client_payload.album }}
-          TOKEN: ${{ github.event.client_payload.token }}
+          ARTIST_PAYLOAD: ${{ github.event.client_payload.artist }}
+          ALBUM_PAYLOAD: ${{ github.event.client_payload.album }}
+          DISCOGS_TOKEN: ${{ github.event.client_payload.token }}
+        shell: python
         run: |
-          echo "🌐 Connecting to Discogs API Gateway..."
-          echo "📥 Searching for: $ARTIST — $ALBUM"
+          import os
+          import json
+          import urllib.request
+          import urllib.parse
+          import urllib.error
+
+          # Безопасно считываем данные из изолированного окружения воркера
+          artist = os.getenv("ARTIST_PAYLOAD", "").strip()
+          album = os.getenv("ALBUM_PAYLOAD", "").strip()
+          token = os.getenv("DISCOGS_TOKEN", "").strip()
+
+          print(f"🌐 Connecting to Discogs API Gateway...")
+          print(f"📥 Searching for: {artist} — {album}")
+
+          headers = {
+              "User-Agent": "MusicVersionsApp/1.0.0",
+              "Authorization": f"Discogs token={token}"
+          }
+
+          # 1. Сначала пробуем точный поиск по раздельным полям
+          query_params = {"artist": artist, "release_title": album, "per_page": 1}
+          search_url = f"https://discogs.com?{urllib.parse.urlencode(query_params)}"
           
-          # Первой командой стучимся строго на ://discogs.com (возвращает JSON)
-          SEARCH_RES=$(curl -s -X GET -G \
-            -H "User-Agent: MusicVersionsApp/1.0.0" \
-            -H "Authorization: Discogs token=$TOKEN" \
-            --data-urlencode "artist=$ARTIST" \
-            --data-urlencode "release_title=$ALBUM" \
-            --data-urlencode "per_page=1" \
-            "https://://discogs.com/database/search")
-            
-          # Если точечный поиск пуст, вторая команда тоже бьёт строго в ://discogs.com
-          if [[ "$SEARCH_RES" != *"resource_url"* ]]; then
-            echo "⚠️ Field search failed. Trying global fallback search..."
-            SEARCH_RES=$(curl -s -X GET -G \
-              -H "User-Agent: MusicVersionsApp/1.0.0" \
-              -H "Authorization: Discogs token=$TOKEN" \
-              --data-urlencode "q=$ARTIST $ALBUM" \
-              --data-urlencode "per_page=1" \
-              "https://://discogs.com/database/search")
-          fi
-          
-          # Извлекаем ссылку на конечный релиз из JSON-ответа
-          RESOURCE_URL=$(echo "$SEARCH_RES" | grep -o '"resource_url":"[^"]*' | head -n 1 | cut -d'"' -f4)
-          
-          if [ -z "$RESOURCE_URL" ] || [[ "$RESOURCE_URL" != "https://"* ]]; then
-            echo "❌ Album NOT found in Discogs database. Response was:"
-            echo "$SEARCH_RES" | head -n 5
-            exit 1
-          fi
-          
-          echo "🎯 Release endpoint found: $RESOURCE_URL"
-          echo "📥 Downloading official tracklist payload..."
-          
-          FINAL_PAYLOAD=$(curl -s -H "User-Agent: MusicVersionsApp/1.0.0" \
-            -H "Authorization: Discogs token=$TOKEN" \
-            "$RESOURCE_URL")
-            
-          echo "$FINAL_PAYLOAD" > tracklist_result.json
-          echo "✅ Payload successfully generated and verified."
-          
+          try:
+              req = urllib.request.Request(search_url, headers=headers)
+              with urllib.request.urlopen(req) as response:
+                  search_data = json.loads(response.read().decode('utf-8'))
+              results = search_data.get("results", [])
+              
+              # 2. Если раздельный поиск пуст, делаем глобальный текстовый поиск по строке (fallback)
+              if not results:
+                  print("⚠️ Field search empty. Trying global query search...")
+                  fallback_params = {"q": f"{artist} {album}", "per_page": 1}
+                  fallback_url = f"https://discogs.com?{urllib.parse.urlencode(fallback_params)}"
+                  req_fb = urllib.request.Request(fallback_url, headers=headers)
+                  with urllib.request.urlopen(req_fb) as response_fb:
+                      search_data = json.loads(response_fb.read().decode('utf-8'))
+                  results = search_data.get("results", [])
+
+              if not results:
+                  print("❌ Album NOT found in Discogs database.")
+                  exit(1)
+                  
+              resource_url = results[0].get("resource_url")
+              if not resource_url:
+                  print("❌ Resource URL not found in results!")
+                  exit(1)
+                  
+              print(f"🎯 Release endpoint found: {resource_url}")
+              print("📥 Downloading official tracklist payload...")
+              
+              # 3. Скачиваем оригинальный треклист конкретного релиза
+              req_release = urllib.request.Request(resource_url, headers=headers)
+              with urllib.request.urlopen(req_release) as response_release:
+                  final_payload = json.loads(response_release.read().decode('utf-8'))
+                  
+              # Сохраняем в файл, который заберёт локальный скрипт на ПК
+              with open("tracklist_result.json", "w", encoding="utf-8") as f:
+                  json.dump(final_payload, f, ensure_ascii=False)
+                  
+              print("✅ Payload successfully generated and verified.")
+              
+          except urllib.error.HTTPError as http_err:
+              print(f"❌ СЕТЕВАЯ ОШИБКА DISCOGS API (Код {http_err.code})")
+              exit(1)
+          except Exception as e:
+              print(f"🚨 Внутренняя ошибка парсера: {e}")
+              exit(1)
+
       - name: Upload Tracklist Result to GitHub Bridge
         uses: actions/upload-artifact@v4
         with:
