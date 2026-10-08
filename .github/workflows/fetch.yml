@@ -14,46 +14,38 @@ jobs:
           ALBUM_PAYLOAD: ${{ github.event.client_payload.album }}
         shell: python
         run: |
-          import os
-          import json
-          import sys
-          import urllib.request
-          import urllib.parse
-          import time
+          import os, json, sys, urllib.request, urllib.parse
 
-          artist = os.getenv("ARTIST_PAYLOAD", "").strip()
-          album = os.getenv("ALBUM_PAYLOAD", "").strip()
+          artist = os.getenv("ARTIST_PAYLOAD", "The Offspring").strip()
+          album = os.getenv("ALBUM_PAYLOAD", "Americana").strip()
 
-          if not artist or not album:
-              print("❌ Error: ARTIST_PAYLOAD or ALBUM_PAYLOAD is empty.")
-              sys.exit(1)
-
-          print(" Connecting to MusicBrainz API Gateway...")
-          print(f"📥 Searching for: {artist} — {album}")
-
-          # 🔥 КРИТИЧЕСКИ ВАЖНО для MusicBrainz: валидный User-Agent с контактами
-          headers = {
-              "User-Agent": "MyLocalMusicDatabaseImporter/1.0.0 ( myemail@example.com )",
-              "Accept": "application/json"
-          }
-
-          # Шаг 1: Поиск ID релиза (Release MBID) через полнотекстовый поиск Lucene
-          # Ищем точное совпадение по артисту и названию альбома
-          query = f'artist:"{artist}" AND release:"{album}"'
-          encoded_query = urllib.parse.quote(query)
+          headers = {"User-Agent": "MusicParserBot/1.0 (contact@example.com)", "Accept": "application/json"}
           
-          search_url = f"https://musicbrainz.org{encoded_query}&fmt=json"
-          print(f"🔍 Search URL: {search_url}")
-
+          # Чистый полнотекстовый запрос без ручной сборки параметров
+          query = f'artist:"{artist}" AND release:"{album}"'
+          params = urllib.parse.urlencode({"query": query, "fmt": "json"})
+          search_url = f"https://musicbrainz.org?{params}"
+          
+          print(f"🔍 Запрос к MusicBrainz: {search_url}")
+          
           try:
               req = urllib.request.Request(search_url, headers=headers)
               with urllib.request.urlopen(req) as response:
-                  search_data = json.loads(response.read().decode('utf-8'))
+                  data = json.loads(response.read().decode('utf-8'))
               
-              releases = search_data.get("releases", [])
+              releases = data.get("releases", [])
               if not releases:
-                  print("❌ Album NOT found in MusicBrainz database.")
+                  print("❌ Альбом не найден")
                   sys.exit(1)
+                  
+              print(f"✅ Успешно! Найден MBID: {releases[0].get('id')}")
+              
+              # Сюда запишем сохранение в tracklist_result.json
+              
+          except Exception as e:
+              print(f"💥 Ошибка: {e}")
+              sys.exit(1)
+
                   
               # Берем первый наиболее подходящий релиз
               best_match = releases[0]
