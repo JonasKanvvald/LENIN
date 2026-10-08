@@ -39,7 +39,7 @@ jobs:
           encoded_album = urllib.parse.quote_plus(album)
           
           # Правильная структура URL
-          search_url = f"https://theaudiodb.com/api/json/v2/{api_key}/searchalbum.php?s={encoded_artist}&a={encoded_album}"
+          search_url = f"https://theaudiodb.com/api/json/{api_key}/searchalbum.php?s={encoded_artist}&a={encoded_album}"
           
           print(f"🔍 Request URL: {search_url}")
           
