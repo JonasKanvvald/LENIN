@@ -14,6 +14,10 @@ jobs:
           python-version: '3.10'
 
       - name: Execute Dynamic Discogs Request via Python
+        env:
+          ARTIST_PAYLOAD: ${{ github.event.client_payload.artist }}
+          ALBUM_PAYLOAD: ${{ github.event.client_payload.album }}
+          DISCOGS_TOKEN: ${{ github.event.client_payload.token }}
         shell: python
         run: |
           import os
@@ -22,9 +26,10 @@ jobs:
           import urllib.parse
           import urllib.error
 
-          artist = """${{ github.event.client_payload.artist }}""".strip()
-          album = """${{ github.event.client_payload.album }}""".strip()
-          token = """${{ github.event.client_payload.token }}""".strip()
+          # Безопасно считываем данные из окружения воркера
+          artist = os.getenv("ARTIST_PAYLOAD", "").strip()
+          album = os.getenv("ALBUM_PAYLOAD", "").strip()
+          token = os.getenv("DISCOGS_TOKEN", "").strip()
 
           print(f"🌐 Fetching from Discogs: {artist} - {album}")
 
@@ -33,7 +38,6 @@ jobs:
               "Authorization": f"Discogs token={token}"
           }
 
-          # Используем более точный раздельный поиск, чтобы не путать движок Discogs
           query_str = urllib.parse.urlencode({"artist": artist, "release_title": album, "per_page": 1})
           search_url = f"https://discogs.com?{query_str}"
           
@@ -41,19 +45,28 @@ jobs:
               req = urllib.request.Request(search_url, headers=headers)
               with urllib.request.urlopen(req) as response:
                   raw_body = response.read().decode('utf-8')
-                  search_data = json.loads(raw_body)
+                  
+              print("📡 Ответ от сервера Discogs получен успешно.")
               
+              # Если ответ не похож на JSON, выводим его в лог
+              if not raw_body.strip().startswith("{"):
+                  print("⚠️ ВНИМАНИЕ: Ответ сервера не является JSON!")
+                  print(raw_body)
+                  exit(1)
+                  
+              search_data = json.loads(raw_body)
               results = search_data.get("results", [])
+              
               if not results:
-                  print("❌ Results array is empty! Album not found.")
+                  print("❌ Массив результатов пуст! Альбом не найден на Discogs.")
                   exit(1)
                   
               resource_url = results[0].get("resource_url")
               if not resource_url:
-                  print("❌ Resource URL not found in first result!")
+                  print("❌ Resource URL отсутствует в первом результате.")
                   exit(1)
                   
-              print(f"🎯 Found release resource: {resource_url}")
+              print(f"🎯 Ссылка на релиз найдена: {resource_url}")
               
               req_release = urllib.request.Request(resource_url, headers=headers)
               with urllib.request.urlopen(req_release) as response_release:
@@ -62,17 +75,16 @@ jobs:
               with open("tracklist_result.json", "w", encoding="utf-8") as f:
                   json.dump(final_payload, f, ensure_ascii=False)
                   
-              print("✅ Payload successfully generated.")
+              print("✅ Результат успешно сгенерирован.")
               
           except urllib.error.HTTPError as http_err:
-              print(f"❌ СЕТЕВАЯ ОШИБКА DISCOGS (Код {http_err.code}):")
+              print(f"❌ СЕТЕВАЯ ОШИБКА HTTP (Код {http_err.code})")
               try:
                   print(http_err.read().decode('utf-8'))
-              except:
-                  print("Не удалось прочитать тело ошибки.")
+              except: pass
               exit(1)
           except Exception as e:
-              print(f"🚨 Внутренняя ошибка парсера: {e}")
+              print(f"🚨 Критический сбой выполнения: {e}")
               exit(1)
 
       - name: Upload Tracklist Result to GitHub Bridge
