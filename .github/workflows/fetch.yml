@@ -31,15 +31,17 @@ jobs:
               "Accept": "application/json"
           }
 
-          # 🎯 Шаг 1: Ищем альбом через AudioDB API
-          # Правильная структура URL: https://theaudiodb.com/api/json/v2/{API_KEY}/searchalbum.php?s={artist}&a={album}
+          #  Шаг 1: Ищем ID альбома через AudioDB API
           api_key = "2"  # Публичный тестовый ключ
-          encoded_artist = urllib.parse.quote_plus(artist)  # quote_plus заменяет пробелы на +
+          
+          # 🔥 ВАЖНО: Используем quote_plus для правильного кодирования пробелов
+          encoded_artist = urllib.parse.quote_plus(artist)
           encoded_album = urllib.parse.quote_plus(album)
           
+          # Правильная структура URL
           search_url = f"https://theaudiodb.com/api/json/v2/{api_key}/searchalbum.php?s={encoded_artist}&a={encoded_album}"
           
-          print(f"🔍 Request URL: {search_url}")  # Для отладки
+          print(f"🔍 Request URL: {search_url}")
           
           try:
               req = urllib.request.Request(search_url, headers=headers)
@@ -54,12 +56,12 @@ jobs:
               album_id = album_list[0].get("idAlbum")
               year_released = album_list[0].get("intYearReleased", "2026")
               
-              print(f"🎯 Album found! ID: {album_id}")
+              print(f" Album found! ID: {album_id}")
               print("📥 Requesting detailed tracklist payload...")
               
               # 🎯 Шаг 2: Скачиваем треклист по ID альбома
               track_url = f"https://theaudiodb.com/api/json/v2/{api_key}/track.php?m={album_id}"
-              print(f"🎵 Tracklist URL: {track_url}")  # Для отладки
+              print(f"🎵 Tracklist URL: {track_url}")
               
               req_track = urllib.request.Request(track_url, headers=headers)
               
@@ -71,13 +73,11 @@ jobs:
                   print("❌ Tracklist is empty for this album ID.")
                   sys.exit(1)
                   
-              # 🎯 Шаг 3: Адаптируем структуру под ожидания вашего локального ПК
+              # 🎯 Шаг 3: Адаптируем структуру
               tracks = []
-              # Сортируем треки по их официальной позиции на диске
               raw_tracks.sort(key=lambda x: int(x.get("intTrackNumber", 0) or 0))
               
               for t in raw_tracks:
-                  # Переводим длительность из миллисекунд в формат ММ:СС
                   duration_ms = int(t.get("intDuration", 0) or 0)
                   duration_sec = duration_ms // 1000 if duration_ms > 0 else 0
                   mins = duration_sec // 60
@@ -88,7 +88,7 @@ jobs:
                       "position": int(t.get("intTrackNumber", len(tracks) + 1)),
                       "title": t.get("strTrack", "Unknown Track"),
                       "artist": t.get("strArtist", artist),
-                      "duration": duration_sec if duration_sec > 0 else None,  # В секундах для базы данных
+                      "duration": duration_sec if duration_sec > 0 else None,
                       "disc_number": 1
                   })
                   
@@ -112,10 +112,10 @@ jobs:
               print(f"URL: {search_url}")
               sys.exit(1)
           except urllib.error.URLError as e:
-              print(f" URL Error: {e.reason}")
+              print(f"🚨 URL Error: {e.reason}")
               sys.exit(1)
           except Exception as e:
-              print(f"🚨 Критический сбой воркера: {e}")
+              print(f" Critical worker failure: {e}")
               import traceback
               traceback.print_exc()
               sys.exit(1)
