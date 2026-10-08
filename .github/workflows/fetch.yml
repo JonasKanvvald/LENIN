@@ -16,28 +16,27 @@ jobs:
           
           echo "🌐 Fetching from Discogs servers: $ARTIST - $ALBUM"
           
-          # 1. Ищем ID мастер-релиза через официальный API-эндпоинт поиска
+          # 1. Точный поиск по раздельным полям artist и release_title
           SEARCH_RES=$(curl -s -G \
             -H "User-Agent: MusicVersionsApp/1.0" \
             -H "Authorization: Discogs token=$TOKEN" \
-            --data-urlencode "q=$ARTIST $ALBUM" \
-            --data-urlencode "type=master" \
+            --data-urlencode "artist=$ARTIST" \
+            --data-urlencode "release_title=$ALBUM" \
             --data-urlencode "per_page=1" \
             "https://discogs.com")
           
-          # Если мастер-релиз не найден, пробуем искать обычный релиз (release)
+          # Если раздельный поиск ничего не дал, пробуем глобальный текстовый поиск (q)
           if [[ "$SEARCH_RES" == *"\"results\":[]"* ]]; then
-            echo "⚠️ Master release not found. Searching for general release..."
+            echo "⚠️ Field search failed. Trying global query search..."
             SEARCH_RES=$(curl -s -G \
               -H "User-Agent: MusicVersionsApp/1.0" \
               -H "Authorization: Discogs token=$TOKEN" \
               --data-urlencode "q=$ARTIST $ALBUM" \
-              --data-urlencode "type=release" \
               --data-urlencode "per_page=1" \
               "https://discogs.com")
           fi
           
-          # Безопасно вытаскиваем resource_url с помощью grep и cut
+          # Вытаскиваем resource_url первого найденного релиза
           RESOURCE_URL=$(echo "$SEARCH_RES" | grep -o '"resource_url":"[^"]*' | head -n 1 | cut -d'"' -f4)
           
           if [ -z "$RESOURCE_URL" ]; then
@@ -45,14 +44,14 @@ jobs:
             exit 1
           fi
           
-          # 2. Выкачиваем чистый оригинальный треклист релиза
+          # 2. Выкачиваем оригинальный треклист релиза
           echo "🎯 Release found: $RESOURCE_URL"
           echo "📥 Requesting tracklist payload..."
           FINAL_PAYLOAD=$(curl -s -H "User-Agent: MusicVersionsApp/1.0" \
             -H "Authorization: Discogs token=$TOKEN" \
             "$RESOURCE_URL")
           
-          # Сохраняем в артефакты шага
+          # Сохраняем результат
           echo "$FINAL_PAYLOAD" > tracklist_result.json
           echo "✅ Payload successfully generated."
           
