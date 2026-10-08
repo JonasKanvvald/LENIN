@@ -17,17 +17,16 @@ jobs:
           echo "🌐 Connecting to Discogs API Gateway..."
           echo "📥 Searching for: $ARTIST — $ALBUM"
           
-          # 🎯 ИСПРАВЛЕНО: Базовый URL указан БЕЗ параметров. 
-          # curl сам безопасно соберет правильную строку с плюсами и процентами из флагов --data-urlencode
+          # Первой командой стучимся строго на ://discogs.com (возвращает JSON)
           SEARCH_RES=$(curl -s -X GET -G \
             -H "User-Agent: MusicVersionsApp/1.0.0" \
             -H "Authorization: Discogs token=$TOKEN" \
             --data-urlencode "artist=$ARTIST" \
             --data-urlencode "release_title=$ALBUM" \
             --data-urlencode "per_page=1" \
-            "https://discogs.com")
+            "https://://discogs.com/database/search")
             
-          # Если точечный поиск не дал результатов, пробуем глобальный поиск по строке q
+          # Если точечный поиск пуст, вторая команда тоже бьёт строго в ://discogs.com
           if [[ "$SEARCH_RES" != *"resource_url"* ]]; then
             echo "⚠️ Field search failed. Trying global fallback search..."
             SEARCH_RES=$(curl -s -X GET -G \
@@ -35,7 +34,7 @@ jobs:
               -H "Authorization: Discogs token=$TOKEN" \
               --data-urlencode "q=$ARTIST $ALBUM" \
               --data-urlencode "per_page=1" \
-              "https://discogs.com")
+              "https://://discogs.com/database/search")
           fi
           
           # Извлекаем ссылку на конечный релиз из JSON-ответа
