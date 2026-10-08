@@ -26,12 +26,11 @@ jobs:
           import urllib.parse
           import urllib.error
 
-          # Безопасно считываем данные из изолированного окружения воркера
           artist = os.getenv("ARTIST_PAYLOAD", "").strip()
           album = os.getenv("ALBUM_PAYLOAD", "").strip()
           token = os.getenv("DISCOGS_TOKEN", "").strip()
 
-          print(f"🌐 Connecting to Discogs API Gateway...")
+          print("🌐 Connecting to Discogs API Gateway...")
           print(f"📥 Searching for: {artist} — {album}")
 
           headers = {
@@ -39,7 +38,6 @@ jobs:
               "Authorization": f"Discogs token={token}"
           }
 
-          # 1. Сначала пробуем точный поиск по раздельным полям
           query_params = {"artist": artist, "release_title": album, "per_page": 1}
           search_url = f"https://discogs.com?{urllib.parse.urlencode(query_params)}"
           
@@ -49,7 +47,6 @@ jobs:
                   search_data = json.loads(response.read().decode('utf-8'))
               results = search_data.get("results", [])
               
-              # 2. Если раздельный поиск пуст, делаем глобальный текстовый поиск по строке (fallback)
               if not results:
                   print("⚠️ Field search empty. Trying global query search...")
                   fallback_params = {"q": f"{artist} {album}", "per_page": 1}
@@ -69,21 +66,23 @@ jobs:
                   exit(1)
                   
               print(f"🎯 Release endpoint found: {resource_url}")
-              print("📥 Downloading official tracklist payload...")
               
-              # 3. Скачиваем оригинальный треклист конкретного релиза
               req_release = urllib.request.Request(resource_url, headers=headers)
               with urllib.request.urlopen(req_release) as response_release:
                   final_payload = json.loads(response_release.read().decode('utf-8'))
                   
-              # Сохраняем в файл, который заберёт локальный скрипт на ПК
               with open("tracklist_result.json", "w", encoding="utf-8") as f:
                   json.dump(final_payload, f, ensure_ascii=False)
                   
               print("✅ Payload successfully generated and verified.")
               
           except urllib.error.HTTPError as http_err:
-              print(f"❌ СЕТЕВАЯ ОШИБКА DISCOGS API (Код {http_err.code})")
+              # 🎯 ИСПРАВЛЕНО: Выводим точный код и текст ошибки от Discogs напрямую в лог
+              print(f"❌ СЕТЕВАЯ ОШИБКА DISCOGS API (Код {http_err.code}):")
+              try:
+                  print(http_err.read().decode('utf-8'))
+              except:
+                  print("Не удалось прочитать тело ответа ошибки.")
               exit(1)
           except Exception as e:
               print(f"🚨 Внутренняя ошибка парсера: {e}")
