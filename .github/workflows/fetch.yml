@@ -13,7 +13,6 @@ jobs:
         with:
           python-version: '3.10'
 
-      # Устанавливаем curl_cffi для идеальной имитации отпечатков Chrome
       - name: Install Anti-Cloudflare Dependencies
         run: |
           pip install curl_cffi
@@ -28,6 +27,7 @@ jobs:
           import os
           import json
           import sys
+          import urllib.parse
           from curl_cffi import requests
 
           artist = os.getenv("ARTIST_PAYLOAD", "").strip()
@@ -40,40 +40,38 @@ jobs:
           headers = {
               "Authorization": f"Discogs token={token}",
               "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-              "Accept": "application/json"
+              "Accept": "application/json",
+              "Accept-Language": "en-US,en;q=0.9"
           }
 
-          # 1. Точный поиск
-          search_url = "https://discogs.com"
-          params = {"artist": artist, "release_title": album, "per_page": 1}
+          # 1. 🎯 ХАК: Собираем параметры в URL вручную через urllib, 
+          # чтобы curl_cffi отправил идеально чистый HTTP-пакет, пробивающий Cloudflare
+          query_params = {"artist": artist, "release_title": album, "per_page": 1}
+          search_url = f"https://discogs.com?{urllib.parse.urlencode(query_params)}"
           
           try:
-              # Флаг impersonate="chrome120" принудительно заставляет Cloudflare верить, что это реальный браузер
-              res = requests.get(search_url, params=params, headers=headers, impersonate="chrome120", timeout=30)
+              res = requests.get(search_url, headers=headers, impersonate="chrome120", timeout=30)
               
+              # Если раздельный поиск пуст или заблокирован, пробуем фолбэк по строке q
+              if res.status_code != 200 or not res.json().get("results"):
+                  print("⚠️ Field search empty or restricted. Trying global query search...")
+                  fallback_params = {"q": f"{artist} {album}", "per_page": 1}
+                  fallback_url = f"https://discogs.com?{urllib.parse.urlencode(fallback_params)}"
+                  res = requests.get(fallback_url, headers=headers, impersonate="chrome120", timeout=30)
+
               if res.status_code != 200:
                   print(f"❌ СЕТЕВАЯ ОШИБКА DISCOGS API (Код {res.status_code})")
-                  print(res.text[:500])
                   sys.exit(1)
                   
               search_data = res.json()
               results = search_data.get("results", [])
-              
-              # 2. Фолбэк поиск (если раздельный пуст)
-              if not results:
-                  print("⚠️ Field search empty. Trying global query search...")
-                  fallback_params = {"q": f"{artist} {album}", "per_page": 1}
-                  res_fb = requests.get(search_url, params=fallback_params, headers=headers, impersonate="chrome120", timeout=30)
-                  search_data = res_fb.json()
-                  results = search_data.get("results", [])
 
               if not results:
                   print("❌ Album NOT found in Discogs database.")
                   sys.exit(1)
                   
-              # Извлекаем первый объект из массива результатов
-              first_result = results[0] if isinstance(results, list) else results
-              resource_url = first_result.get("resource_url")
+              # Извлекаем ссылку на релиз
+              resource_url = results[0].get("resource_url") if isinstance(results, list) else results.get("resource_url")
               
               if not resource_url:
                   print("❌ Resource URL not found in results!")
@@ -84,6 +82,11 @@ jobs:
               
               # 3. Скачиваем треклист конкретного релиза
               res_release = requests.get(resource_url, headers=headers, impersonate="chrome120", timeout=30)
+              
+              if res_release.status_code != 200:
+                  print(f"❌ Не удалось скачать релиз (Код {res_release.status_code})")
+                  sys.exit(1)
+                  
               final_payload = res_release.json()
                   
               with open("tracklist_result.json", "w", encoding="utf-8") as f:
