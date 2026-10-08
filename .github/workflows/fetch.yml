@@ -23,7 +23,7 @@ jobs:
           artist = os.getenv("ARTIST_PAYLOAD", "").strip()
           album = os.getenv("ALBUM_PAYLOAD", "").strip()
 
-          print("🌐 Connecting to Open Music API Gateway...")
+          print(" Connecting to Open Music API Gateway...")
           print(f"📥 Searching for: {artist} — {album}")
 
           headers = {
@@ -31,10 +31,15 @@ jobs:
               "Accept": "application/json"
           }
 
-          # 🎯 Шаг 1: Ищем ID альбома через открытый тестовый ключ API '2'
-          encoded_artist = urllib.parse.quote(artist)
-          encoded_album = urllib.parse.quote(album)
-          search_url = f"https://theaudiodb.com{encoded_artist}&a={encoded_album}"
+          # 🎯 Шаг 1: Ищем альбом через AudioDB API
+          # Правильная структура URL: https://theaudiodb.com/api/json/v2/{API_KEY}/searchalbum.php?s={artist}&a={album}
+          api_key = "2"  # Публичный тестовый ключ
+          encoded_artist = urllib.parse.quote_plus(artist)  # quote_plus заменяет пробелы на +
+          encoded_album = urllib.parse.quote_plus(album)
+          
+          search_url = f"https://theaudiodb.com/api/json/v2/{api_key}/searchalbum.php?s={encoded_artist}&a={encoded_album}"
+          
+          print(f"🔍 Request URL: {search_url}")  # Для отладки
           
           try:
               req = urllib.request.Request(search_url, headers=headers)
@@ -53,7 +58,9 @@ jobs:
               print("📥 Requesting detailed tracklist payload...")
               
               # 🎯 Шаг 2: Скачиваем треклист по ID альбома
-              track_url = f"https://theaudiodb.com{album_id}"
+              track_url = f"https://theaudiodb.com/api/json/v2/{api_key}/track.php?m={album_id}"
+              print(f"🎵 Tracklist URL: {track_url}")  # Для отладки
+              
               req_track = urllib.request.Request(track_url, headers=headers)
               
               with urllib.request.urlopen(req_track) as response_track:
@@ -70,30 +77,47 @@ jobs:
               raw_tracks.sort(key=lambda x: int(x.get("intTrackNumber", 0) or 0))
               
               for t in raw_tracks:
-                  # Переводим длительность из секунд в формат ММ:СС
-                  duration_sec = int(t.get("intDuration", 0) or 0) // 1000
+                  # Переводим длительность из миллисекунд в формат ММ:СС
+                  duration_ms = int(t.get("intDuration", 0) or 0)
+                  duration_sec = duration_ms // 1000 if duration_ms > 0 else 0
                   mins = duration_sec // 60
                   secs = duration_sec % 60
                   duration_str = f"{mins}:{str(secs).zfill(2)}"
                   
                   tracks.append({
+                      "position": int(t.get("intTrackNumber", len(tracks) + 1)),
                       "title": t.get("strTrack", "Unknown Track"),
-                      "type_": "track",
-                      "duration": duration_str
+                      "artist": t.get("strArtist", artist),
+                      "duration": duration_sec if duration_sec > 0 else None,  # В секундах для базы данных
+                      "disc_number": 1
                   })
                   
               output_payload = {
-                  "year": str(year_released)[:4],
-                  "tracklist": tracks
+                  "title": album,
+                  "artist": artist,
+                  "year": str(year_released)[:4] if year_released else "2026",
+                  "album_type": "studio",
+                  "tracks": tracks,
+                  "source": "theaudiodb"
               }
               
               with open("tracklist_result.json", "w", encoding="utf-8") as f:
-                  json.dump(output_payload, f, ensure_ascii=False)
+                  json.dump(output_payload, f, ensure_ascii=False, indent=2)
                   
               print(f"✅ Payload successfully generated! Total tracks: {len(tracks)}")
+              print(f"📦 Output: {json.dumps(output_payload, ensure_ascii=False, indent=2)}")
               
+          except urllib.error.HTTPError as e:
+              print(f"🚨 HTTP Error: {e.code} - {e.reason}")
+              print(f"URL: {search_url}")
+              sys.exit(1)
+          except urllib.error.URLError as e:
+              print(f" URL Error: {e.reason}")
+              sys.exit(1)
           except Exception as e:
               print(f"🚨 Критический сбой воркера: {e}")
+              import traceback
+              traceback.print_exc()
               sys.exit(1)
 
       - name: Upload Tracklist Result to GitHub Bridge
