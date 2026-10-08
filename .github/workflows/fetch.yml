@@ -8,92 +8,63 @@ jobs:
   fetch:
     runs-on: ubuntu-latest
     steps:
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.10'
-
-      - name: Install Anti-Cloudflare Dependencies
-        run: |
-          pip install curl_cffi
-
-      - name: Execute Dynamic Discogs Request via Python
+      - name: Execute Dynamic Music Request via MusicBrainz
         env:
-          ARTIST_PAYLOAD: ${{ github.event.client_payload.artist }}
-          ALBUM_PAYLOAD: ${{ github.event.client_payload.album }}
-          DISCOGS_TOKEN: ${{ github.event.client_payload.token }}
-        shell: python
+          ARTIST: ${{ github.event.client_payload.artist }}
+          ALBUM: ${{ github.event.client_payload.album }}
         run: |
-          import os
-          import json
-          import sys
-          import urllib.parse
-          from curl_cffi import requests
-
-          artist = os.getenv("ARTIST_PAYLOAD", "").strip()
-          album = os.getenv("ALBUM_PAYLOAD", "").strip()
-          token = os.getenv("DISCOGS_TOKEN", "").strip()
-
-          print("🌐 Connecting to Discogs API Gateway (Impersonating Chrome)...")
-          print(f"📥 Searching for: {artist} — {album}")
-
-          headers = {
-              "Authorization": f"Discogs token={token}",
-              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-              "Accept": "application/json",
-              "Accept-Language": "en-US,en;q=0.9"
-          }
-
-          # 🎯 ИСПРАВЛЕНО: Делаем один прямой глобальный поиск по строке "q", который Discogs обрабатывает идеально.
-          # Обязательно добавляем фильтр type=master, чтобы забрать каноничную версию релиза с чистым треклистом.
-          query_params = {"q": f"{artist} {album}", "type": "master", "per_page": 1}
-          search_url = f"https://discogs.com?{urllib.parse.urlencode(query_params)}"
+          echo "🌐 Connecting to MusicBrainz API Gateway..."
+          echo "📥 Searching for: $ARTIST — $ALBUM"
           
+          # Кодируем пробелы для URL-запроса вручную
+          SH_ARTIST=$(echo "$ARTIST" | sed 's/ /%20/g')
+          SH_ALBUM=$(echo "$ALBUM" | sed 's/ /%20/g')
+          
+          # Ищем релиз в базе данных MusicBrainz
+          SEARCH_RES=$(curl -s -X GET \
+            -H "User-Agent: MusicVersionsApp/1.0.0 ( contact@example.com )" \
+            "https://musicbrainz.org")
+          
+          # Вытаскиваем ID релиза (mbid)
+          RELEASE_ID=$(echo "$SEARCH_RES" | grep -o '"id":"[^"]*' | head -n 1 | cut -d'"' -f4)
+          
+          if [ -z "$RELEASE_ID" ]; then
+            echo "❌ Album NOT found in MusicBrainz database."
+            exit 1
+          fi
+          
+          echo "🎯 Release found! ID: $RELEASE_ID"
+          echo "📥 Requesting detailed tracklist payload..."
+          
+          # Скачиваем полный треклист конкретного релиза
+          FINAL_PAYLOAD=$(curl -s -X GET \
+            -H "User-Agent: MusicVersionsApp/1.0.0 ( contact@example.com )" \
+            "https://musicbrainz.org")
+            
+          # Пересобираем JSON под структуру, которую ожидает ваш скрипт на ПК
+          # Мутируем формат MusicBrainz в формат Discogs
+          echo "$FINAL_PAYLOAD" | python3 -c "
+          import sys, json
           try:
-              # Идеальная TLS-имитация браузера Chrome зафиксирована для главного запроса
-              res = requests.get(search_url, headers=headers, impersonate="chrome120", timeout=30)
-              
-              if res.status_code != 200:
-                  print(f"❌ СЕТЕВАЯ ОШИБКА DISCOGS API (Код {res.status_code})")
-                  print(res.text[:500])
-                  sys.exit(1)
-                  
-              search_data = res.json()
-              results = search_data.get("results", [])
-
-              if not results:
-                  print("❌ Album NOT found in Discogs database.")
-                  sys.exit(1)
-                  
-              # Извлекаем ссылку на релиз
-              first_result = results if isinstance(results, list) else results
-              resource_url = first_result.get("resource_url")
-              
-              if not resource_url:
-                  print("❌ Resource URL not found in results!")
-                  sys.exit(1)
-                  
-              print(f"🎯 Release endpoint found: {resource_url}")
-              print("📥 Downloading official tracklist payload...")
-              
-              # 3. Скачиваем треклист конкретного релиза (тоже защищаем имперсонацией Chrome)
-              res_release = requests.get(resource_url, headers=headers, impersonate="chrome120", timeout=30)
-              
-              if res_release.status_code != 200:
-                  print(f"❌ Не удалось скачать релиз (Код {res_release.status_code})")
-                  sys.exit(1)
-                  
-              final_payload = res_release.json()
-                  
-              with open("tracklist_result.json", "w", encoding="utf-8") as f:
-                  json.dump(final_payload, f, ensure_ascii=False)
-                  
-              print("✅ Payload successfully generated and verified.")
-              
+              data = json.load(sys.stdin)
+              tracks = []
+              for t in data.get('media', [{}])[0].get('tracks', []):
+                  tracks.append({
+                      'title': t.get('title'),
+                      'type_': 'track',
+                      'duration': f\"{int(t.get('length', 0)) // 60000}:{str((int(t.get('length', 0)) // 1000) % 60).zfill(2)}\"
+                  })
+              output = {
+                  'year': data.get('date', '2026')[:4],
+                  'tracklist': tracks
+              }
+              print(json.dumps(output, ensure_ascii=False))
           except Exception as e:
-              print(f"🚨 Критический сбой выполнения: {e}")
               sys.exit(1)
-
+          " > tracklist_result.json
+          
+          echo "✅ Payload successfully generated and adapter verified."
+          
       - name: Upload Tracklist Result to GitHub Bridge
         uses: actions/upload-artifact@v4
         with:
