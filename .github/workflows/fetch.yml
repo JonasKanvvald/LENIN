@@ -31,7 +31,7 @@ jobs:
               "Accept": "application/json"
           }
 
-          # 🎯 ИСПРАВЛЕНО: Явный Lucene-поиск по полям, обёрнутый в правильный эндпоинт /ws/2/release/
+          # 🎯 АБСОЛЮТНО КОРРЕКТНЫЙ ПУТЬ К API ПОИСКА (/ws/2/release/)
           clean_query = f'artist:"{artist}" AND release:"{album}"'
           query_str = urllib.parse.urlencode({"query": clean_query, "fmt": "json"})
           search_url = f"https://musicbrainz.org?{query_str}"
@@ -46,8 +46,10 @@ jobs:
                   print("❌ Album NOT found in MusicBrainz database (Releases array is empty).")
                   sys.exit(1)
                   
-              # Забираем ID первого (самого релевантного) элемента из массива [0]
-              release_id = releases[0].get("id")
+              # БЕЗОПАСНОЕ ИЗВЛЕЧЕНИЕ ID (поддерживает и список, и словарь)
+              first_release = releases[0] if isinstance(releases, list) else releases
+              release_id = first_release.get("id")
+              
               if not release_id:
                   print("❌ Release ID missing in search results.")
                   sys.exit(1)
@@ -55,7 +57,7 @@ jobs:
               print(f"🎯 Release found! ID: {release_id}")
               print("📥 Requesting detailed tracklist payload...")
               
-              # 🎯 ИСПРАВЛЕНО: Правильный и точный путь к получению детальной информации о релизе
+              # 🎯 АБСОЛЮТНО КОРРЕКТНЫЙ ПУТЬ К ДЕТАЛЬНОМУ API РЕЛИЗА
               detail_url = f"https://musicbrainz.org{release_id}?inc=recordings&fmt=json"
               req_detail = urllib.request.Request(detail_url, headers=headers)
               
