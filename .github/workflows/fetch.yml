@@ -17,16 +17,16 @@ jobs:
           echo "🌐 Connecting to Discogs API Gateway..."
           echo "📥 Searching for: $ARTIST — $ALBUM"
           
-          # 🎯 ИСПРАВЛЕНО: Запросы отправляются строго на api.discogs.com для получения JSON вместо HTML
+          # Запрос отправляется строго по протоколу https:// на поддомен ://discogs.com во избежание редиректа 301
           SEARCH_RES=$(curl -s -X GET -G \
             -H "User-Agent: MusicVersionsApp/1.0.0" \
             -H "Authorization: Discogs token=$TOKEN" \
             --data-urlencode "artist=$ARTIST" \
             --data-urlencode "release_title=$ALBUM" \
             --data-urlencode "per_page=1" \
-            "https://discogs.com")
+            "https://://discogs.com/database/search")
             
-          # Проверяем, вернулся ли валидный JSON
+          # Если точечный поиск не дал результатов, пробуем глобальный поиск по строке q
           if [[ "$SEARCH_RES" != *"resource_url"* ]]; then
             echo "⚠️ Field search failed. Trying global fallback search..."
             SEARCH_RES=$(curl -s -X GET -G \
@@ -34,10 +34,10 @@ jobs:
               -H "Authorization: Discogs token=$TOKEN" \
               --data-urlencode "q=$ARTIST $ALBUM" \
               --data-urlencode "per_page=1" \
-              "https://discogs.com")
+              "https://://discogs.com/database/search")
           fi
           
-          # Извлекаем прямую ссылку на треклист конкретного релиза
+          # Безопасно извлекаем ссылку на конечный релиз из JSON-ответа
           RESOURCE_URL=$(echo "$SEARCH_RES" | grep -o '"resource_url":"[^"]*' | head -n 1 | cut -d'"' -f4)
           
           if [ -z "$RESOURCE_URL" ] || [[ "$RESOURCE_URL" != "https://"* ]]; then
