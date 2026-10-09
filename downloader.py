@@ -15,7 +15,7 @@ def fetch_musicbrainz_album(artist: str, album: str) -> dict | None:
     Выкачивает данные о релизе и треклисте из MusicBrainz API с улучшенной обработкой ошибок.
     """
     # 1. Полнотекстовый поиск релиза (Search Query)
-    query = f'artist:"{artist}" AND release:"{album}"'
+    query = f'artist:"{artist}" AND (release:"{album}" OR title:"{album}")'
     params = urlencode({"query": query, "fmt": "json", "limit": 3})
     search_url = f"https://musicbrainz.org/ws/2/release?{params}"
     
