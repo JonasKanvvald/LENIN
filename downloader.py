@@ -11,9 +11,12 @@ def fetch_musicbrainz_album(artist: str, album: str):
         "Accept": "application/json"
     }
 
+    # Полнотекстовый поиск релиза через Lucene-запрос
     query = f'artist:"{artist}" AND release:"{album}"'
     params = urllib.parse.urlencode({"query": query, "fmt": "json"})
     search_url = f"https://musicbrainz.org?{params}"
+    
+    print(f"🔍 Поиск альбома: {search_url}")
     
     try:
         req = urllib.request.Request(search_url, headers=headers)
@@ -22,20 +25,36 @@ def fetch_musicbrainz_album(artist: str, album: str):
         
         releases = data.get("releases", [])
         if not releases:
+            print("❌ Релизы не найдены в результатах поиска.")
             return None
             
+        # 🔥 ИСПРАВЛЕНО: Берем именно ПЕРВЫЙ релиз из списка
         best_match = releases[0]
         release_id = best_match.get("id")
+        
+        if not release_id:
+            print("❌ Не удалось извлечь id (MBID) релиза.")
+            return None
+            
         year_released = best_match.get("date", "2026")[:4]
+        print(f"✅ Найден MBID релиза: {release_id}")
         
-        time.sleep(1.0) # Лимит API
+        # Обязательная пауза 1 секунда, чтобы MusicBrainz не забанил по лимиту (Rate Limit)
+        time.sleep(1.0)
         
+        # Шаг 2: Запрос треклиста по найденному MBID
         lookup_url = f"https://musicbrainz.org/{release_id}?inc=recordings&fmt=json"
+        print(f"🎵 Запрос треклиста: {lookup_url}")
+        
         req_track = urllib.request.Request(lookup_url, headers=headers)
         with urllib.request.urlopen(req_track) as response_track:
             track_data = json.loads(response_track.read().decode('utf-8'))
             
         media = track_data.get("media", [])
+        if not media:
+            print("❌ Секция media в ответе пуста.")
+            return None
+
         tracks = []
         for disc in media:
             disc_number = int(disc.get("position", 1))
