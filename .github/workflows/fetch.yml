@@ -19,119 +19,20 @@ jobs:
   fetch:
     runs-on: ubuntu-latest
     steps:
+      # 1. Устанавливаем библиотеку httpx, которая нужна нашему скрипту
+      - name: Install dependencies
+        run: pip install httpx
+
+      # 2. Запускаем наш новый Python-скрипт. Он сам выполнит всю работу.
       - name: Execute Dynamic Music Request via MusicBrainz Python
         env:
-          ARTIST_PAYLOAD: ${{ github.event.client_payload.artist }}
-          ALBUM_PAYLOAD: ${{ github.event.client_payload.album }}
-        shell: python
+          ARTIST: ${{ github.event.client_payload.artist || github.event.inputs.artist }}
+          ALBUM: ${{ github.event.client_payload.album || github.event.inputs.album }}
+        shell: bash
         run: |
-          import os, json, sys, urllib.request, urllib.parse
+          python music_parser.py
 
-          artist = os.getenv("ARTIST_PAYLOAD", "The Offspring").strip()
-          album = os.getenv("ALBUM_PAYLOAD", "Americana").strip()
-
-          headers = {"User-Agent": "MusicParserBot/1.0 (contact@example.com)", "Accept": "application/json"}
-          
-          # Чистый полнотекстовый запрос без ручной сборки параметров
-          query = f'artist:"{artist}" AND release:"{album}"'
-          params = urllib.parse.urlencode({"query": query, "fmt": "json"})
-          search_url = f"https://musicbrainz.org?{params}"
-          
-          print(f"🔍 Запрос к MusicBrainz: {search_url}")
-          
-          try:
-              req = urllib.request.Request(search_url, headers=headers)
-              with urllib.request.urlopen(req) as response:
-                  data = json.loads(response.read().decode('utf-8'))
-              
-              releases = data.get("releases", [])
-              if not releases:
-                  print("❌ Альбом не найден")
-                  sys.exit(1)
-                  
-              print(f"✅ Успешно! Найден MBID: {releases[0].get('id')}")
-              
-              # Сюда запишем сохранение в tracklist_result.json
-              
-          except Exception as e:
-              print(f"💥 Ошибка: {e}")
-              sys.exit(1)
-
-                  
-              # Берем первый наиболее подходящий релиз
-              best_match = releases[0]
-              release_id = best_match.get("id")
-              year_released = best_match.get("date", "2026")[:4]
-              
-              print(f"✅ Album found! MusicBrainz ID (MBID): {release_id}")
-              
-              # MusicBrainz просит соблюдать лимит 1 запрос в секунду
-              time.sleep(1.0)
-              
-              # Шаг 2: Запрос детальной информации о релизе и его треклисте (recordings)
-              lookup_url = f"https://musicbrainz.org{release_id}?inc=recordings&fmt=json"
-              print(f"🎵 Tracklist Lookup URL: {lookup_url}")
-              
-              req_lookup = urllib.request.Request(lookup_url, headers=headers)
-              with urllib.request.urlopen(req_lookup) as response_lookup:
-                  lookup_data = json.loads(response_lookup.read().decode('utf-8'))
-                  
-              media = lookup_data.get("media", [])
-              if not media:
-                  print("❌ Tracklist is empty for this release ID.")
-                  sys.exit(1)
-                  
-              # Шаг 3: Адаптируем структуру данных под вашу локальную БД
-              tracks = []
-              
-              # Проходимся по дискам (в большинстве случаев он один)
-              for disc in media:
-                  raw_tracks = disc.get("tracks", [])
-                  for t in raw_tracks:
-                      # Длительность в MusicBrainz отдается в миллисекундах
-                      duration_ms = int(t.get("length", 0) or 0)
-                      duration_sec = duration_ms // 1000 if duration_ms > 0 else 0
-                      
-                      recording = t.get("recording", {})
-                      
-                      tracks.append({
-                          "position": int(t.get("position", len(tracks) + 1)),
-                          "title": t.get("title", "Unknown Track"),
-                          "artist": artist,
-                          "duration": duration_sec if duration_sec > 0 else None,
-                          "disc_number": int(disc.get("position", 1))
-                      })
-                      
-              output_payload = {
-                  "title": album,
-                  "artist": artist,
-                  "year": year_released,
-                  "album_type": best_match.get("release-group", {}).get("primary-type", "studio").lower(),
-                  "tracks": tracks,
-                  "source": "musicbrainz"
-              }
-              
-              # Записываем результат в JSON-файл
-              with open("tracklist_result.json", "w", encoding="utf-8") as f:
-                  json.dump(output_payload, f, ensure_ascii=False, indent=2)
-                  
-              print(f"🚀 Payload successfully generated! Total tracks: {len(tracks)}")
-              
-          except urllib.error.HTTPError as e:
-              print(f"🚨 HTTP Error: {e.code} - {e.reason}")
-              # Если получили 503, скорее всего превысили лимит или не указан User-Agent
-              if e.code == 503:
-                  print("👉 Hint: Check your User-Agent format or slow down requests rate.")
-              sys.exit(1)
-          except urllib.error.URLError as e:
-              print(f"🚨 URL Error: {e.reason}")
-              sys.exit(1)
-          except Exception as e:
-              print(f"💥 Critical worker failure: {e}")
-              import traceback
-              traceback.print_exc()
-              sys.exit(1)
-
+      # 3. Сохраняем результат, чтобы он был доступен другим шагам/пользователям
       - name: Upload Tracklist Result to GitHub Bridge
         uses: actions/upload-artifact@v4
         with:
