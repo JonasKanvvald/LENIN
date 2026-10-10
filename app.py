@@ -12,45 +12,40 @@ def load_existing_albums():
     """
     db_filename = "albums_db.json"
     
+    # Проверяем наличие файла, если нет - возвращаем пустой список
     if not os.path.exists(db_filename):
-        print(f"❌ Файл {db_filename} не найден. Создаем новую базу...")
-        # Создаем файл базы данных
-        try:
-            with open(db_filename, "w", encoding="utf-8") as f:
-                json.dump([], f)  # Пустой список треков
-                
-            albums_db = []
-            print("✅ Файл базы данных создан.")
-            return albums_db
-            
-        except Exception as e:
-            print(f"⚠️ Ошибка при создании базы: {e}")
-            return None
+        print(f"❌ Файл {db_filename} не найден.")
+        return []
     
     try:
         with open(db_filename, "r", encoding="utf-8") as f:
             albums_db = json.load(f)
             
+        # Проверяем корректность загруженных данных
         if not isinstance(albums_db, list):
-            albums_db = []
-            print("🔄 Пересоздаем файл базы данных из корота...")
-            
-            # Проверяем и пересоздаем файл
+            print("🔄 Некорректный формат базы. Пересоздаем пустой список...")
             with open(db_filename, "w", encoding="utf-8") as f:
-                json.dump(albums_db, f)
+                json.dump([], f)
                 
+            albums_db = []
+            
         return albums_db
         
     except Exception as e:
         print(f"⚠️ Ошибка при загрузке базы: {e}")
         
-        # Пересоздаем файл
-        new_albums_db = []
-        with open(db_filename, "w", encoding="utf-8) as f:
-            json.dump(new_albums_db, f)
+        # Если произошла ошибка - пересоздаем файл
+        try:
+            with open(db_filename, "w", encoding="utf-8") as f:
+                json.dump([], f)
+                
+            print("🔄 База данных пересоздана. Используем пустой список.")
+            return []
             
-        return new_albums_db
-
+        except Exception as e2:
+            # Если даже это не сработает - возвращаем ошибку
+            print(f"❌ Не удалось создать базу: {e2}")
+            sys.exit(1)
 
 def fetch_musicbrainz_album(artist_payload, album_payload):
     """
