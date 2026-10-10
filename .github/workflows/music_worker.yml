@@ -4,6 +4,8 @@ on:
   # Запуск по заданным аргументам через workflow_dispatch или repository_dispatch
   workflow_dispatch:
 
+# music_worker.yml
+
 jobs:
   fetch_album:
     runs-on: ubuntu-latest
@@ -13,18 +15,16 @@ jobs:
         
       - name: Set up Python Environment
         uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-          
+        
       - name: Install Dependencies
         run: |
           pip install requests PyYAML
-      
-      - name: Fetch Album Data from MusicBrainz API
+
+      - name: Execute Music Migration Script
         env:
           ARTIST_PAYLOAD: ${{ github.event.inputs.artist || inputs.artist }}
           ALBUM_PAYLOAD: $${{ github.event.inputs.album || inputs.album }}
-        run: python albums_loader.py
+        run: python app.py  # Используем исправленный app.py
         
       - name: Upload Albums JSON Database to Artifacts
         if: always()
