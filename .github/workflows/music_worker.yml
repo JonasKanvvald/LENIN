@@ -4,14 +4,6 @@ on:
   repository_dispatch:
     types: [fetch_album]
   workflow_dispatch:
-    inputs:
-      artist_payload:
-        description: 'Artist name'
-        required: true
-        
-      album_payload:
-        description: 'Album title'
-        required: true
 
 jobs:
   fetch_album_data:
@@ -29,9 +21,9 @@ jobs:
 
       - name: Fetch Album Data from MusicBrainz API
         env:
-          ARTIST_PAYLOAD: ${{ inputs.artist_payload }}
-          ALBUM_PAYLOAD: $${{ inputs.album_payload }}
-        run: python app.py
+          ARTIST_PAYLOAD: ${{ github.event.inputs.artist || inputs.artist }}
+          ALBUM_PAYLOAD: $${{ github.event.inputs.album || inputs.album }}
+        run: python music_parser.py
         
       - name: Upload Albums JSON Database to Artifacts
         if: always()
