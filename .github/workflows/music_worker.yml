@@ -1,13 +1,20 @@
 name: 'Fetch Album from MusicBrainz'
 
 on:
-  # Запуск по заданным аргументам через workflow_dispatch или repository_dispatch
+  repository_dispatch:
+    types: [fetch_album]
   workflow_dispatch:
-
-# music_worker.yml
+    inputs:
+      artist_payload:
+        description: 'Artist name'
+        required: true
+        
+      album_payload:
+        description: 'Album title'
+        required: true
 
 jobs:
-  fetch_album:
+  fetch_album_data:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository Code
@@ -20,11 +27,11 @@ jobs:
         run: |
           pip install requests PyYAML
 
-      - name: Execute Music Migration Script
+      - name: Fetch Album Data from MusicBrainz API
         env:
-          ARTIST_PAYLOAD: ${{ github.event.inputs.artist || inputs.artist }}
-          ALBUM_PAYLOAD: $${{ github.event.inputs.album || inputs.album }}
-        run: python app.py  # Используем исправленный app.py
+          ARTIST_PAYLOAD: ${{ inputs.artist_payload }}
+          ALBUM_PAYLOAD: $${{ inputs.album_payload }}
+        run: python app.py
         
       - name: Upload Albums JSON Database to Artifacts
         if: always()
