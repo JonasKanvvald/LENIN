@@ -1,45 +1,32 @@
-name: Global Music API Proxy Worker
+name: 'Fetch Album from MusicBrainz'
 
 on:
-  repository_dispatch:
-    types: [fetch_album]
+  # Запуск по заданным аргументам через workflow_dispatch или repository_dispatch
   workflow_dispatch:
-    inputs:
-      artist:
-        description: 'Имя артиста'
-        required: true
-        default: 'The Offspring'
-      album:
-        description: 'Название альбома'
-        required: true
-        default: 'Americana'
 
 jobs:
-  fetch:
+  fetch_album:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository Code
         uses: actions/checkout@v4
-
+        
       - name: Set up Python Environment
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-          cache: 'pip'
-
+          
       - name: Install Dependencies
         run: |
-          python -m pip install --upgrade pip
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-
-      - name: Execute Music Migration Script
+          pip install requests PyYAML
+      
+      - name: Fetch Album Data from MusicBrainz API
         env:
-          ARTIST_PAYLOAD: ${{ github.event.client_payload.artist || inputs.artist }}
-          ALBUM_PAYLOAD: $${{ github.event.client_payload.album || inputs.album }}
-        run: |
-          python app.py
-
-      - name: Handle Database Updates (Optional)
+          ARTIST_PAYLOAD: ${{ github.event.inputs.artist || inputs.artist }}
+          ALBUM_PAYLOAD: $${{ github.event.inputs.album || inputs.album }}
+        run: python albums_loader.py
+        
+      - name: Upload Albums JSON Database to Artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
