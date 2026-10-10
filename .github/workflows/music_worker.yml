@@ -35,30 +35,13 @@ jobs:
       - name: Execute Music Migration Script
         env:
           ARTIST_PAYLOAD: ${{ github.event.client_payload.artist || inputs.artist }}
-          ALBUM_PAYLOAD: ${{ github.event.client_payload.album || inputs.album }}
+          ALBUM_PAYLOAD: $${{ github.event.client_payload.album || inputs.album }}
         run: |
           python app.py
 
-      - name: Commit and Push Updated JSON Database
-        run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@://github.com"
-          
-          # Проверяем, изменился ли или создался файл базы данных
-          if [ -f albums_db.json ]; then
-            git add albums_db.json
-            if git diff --staged --quiet; then
-              print "No changes to commit in albums_db.json"
-            else
-              git commit -m "database: auto-update albums_db.json [skip ci]"
-              git push
-            fi
-          fi
-
-      - name: Upload Albums JSON Database to Artifacts
+      - name: Handle Database Updates (Optional)
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: updated-music-database
           path: albums_db.json
-          retention-days: 7
