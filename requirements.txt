@@ -1,3 +1,1 @@
-httpx
-databases
-aiopg
+requests>=2.31.0
